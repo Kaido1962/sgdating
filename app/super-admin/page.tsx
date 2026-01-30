@@ -1,0 +1,267 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Users, FileText, Image, MessageSquare, Activity, Shield, LogOut, Settings, Database } from "lucide-react"
+import SuperAdminRoute from "@/components/SuperAdminRoute"
+import Navbar from "@/components/navbar"
+import { db, auth } from "@/lib/firebase"
+import { collection, getDocs, query, orderBy, limit, getCountFromServer, where } from "firebase/firestore"
+import { useRouter } from "next/navigation"
+import { signOut } from "firebase/auth"
+
+interface Stats {
+    totalUsers: number
+    activeUsers: number
+    totalPosts: number
+    totalStories: number
+    totalChats: number
+    totalAdmins: number // Extra stat for Super Admin
+}
+
+interface UserData {
+    uid: string
+    displayName: string
+    email: string
+    photoURL?: string
+    lastSeen: any
+    createdAt: any
+}
+
+interface PostData {
+    id: string
+    content: string
+    authorName: string
+    createdAt: any
+    likes: number
+}
+
+export default function SuperAdminPage() {
+    const router = useRouter()
+    const [stats, setStats] = useState<Stats>({
+        totalUsers: 0,
+        activeUsers: 0,
+        totalPosts: 0,
+        totalStories: 0,
+        totalChats: 0,
+        totalAdmins: 0,
+    })
+    const [users, setUsers] = useState<UserData[]>([])
+    const [alerts, setAlerts] = useState<any[]>([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        const fetchData = async () => {
+            setLoading(true)
+            await Promise.all([
+                fetchStats(),
+                fetchUsers(),
+                fetchAlerts()
+            ])
+            setLoading(false)
+        }
+        fetchData()
+    }, [])
+
+    const fetchStats = async () => {
+        try {
+            const usersCount = await getCountFromServer(collection(db, "users"))
+            const totalUsers = usersCount.data().count
+
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+            const activeUsersQuery = query(
+                collection(db, "users"),
+                where("lastSeen", ">", fiveMinutesAgo)
+            )
+            const activeUsersCount = await getCountFromServer(activeUsersQuery)
+            const activeUsers = activeUsersCount.data().count
+
+            const postsCount = await getCountFromServer(collection(db, "posts"))
+            const totalPosts = postsCount.data().count
+
+            const storiesCount = await getCountFromServer(collection(db, "stories"))
+            const totalStories = storiesCount.data().count
+
+            const chatsCount = await getCountFromServer(collection(db, "chats"))
+            const totalChats = chatsCount.data().count
+
+            const totalAdmins = 1 // Hardcoded for now
+
+            setStats({ totalUsers, activeUsers, totalPosts, totalStories, totalChats, totalAdmins })
+        } catch (error) {
+            console.error("Error fetching stats:", error)
+        }
+    }
+
+    const fetchUsers = async () => {
+        try {
+            const q = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(10))
+            const snapshot = await getDocs(q)
+            const usersData: UserData[] = []
+            snapshot.forEach((doc) => {
+                usersData.push({ uid: doc.id, ...doc.data() } as UserData)
+            })
+            setUsers(usersData)
+        } catch (error) {
+            console.error("Error fetching users:", error)
+        }
+    }
+
+    const fetchAlerts = async () => {
+        try {
+            const q = query(collection(db, "admin_alerts"), orderBy("timestamp", "desc"), limit(5))
+            const snapshot = await getDocs(q)
+            const alertsData: any[] = []
+            snapshot.forEach((doc) => {
+                alertsData.push({ id: doc.id, ...doc.data() })
+            })
+            setAlerts(alertsData)
+        } catch (error) {
+            console.error("Error fetching alerts:", error)
+        }
+    }
+
+    const isOnline = (lastSeen: any) => {
+        if (!lastSeen?.seconds) return false
+        const fiveMinutesAgo = Date.now() - 5 * 60 * 1000
+        return lastSeen.seconds * 1000 > fiveMinutesAgo
+    }
+
+    // handleLogout moved to sidebar
+
+    return (
+        <SuperAdminRoute>
+            <div className="p-8">
+                <div className="max-w-7xl mx-auto space-y-8">
+
+                    {/* Header Section */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                        <div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <h1 className="text-3xl font-bold text-gray-900">Super Admin Dashboard</h1>
+                            </div>
+                            <p className="text-gray-500 mt-1">Full system control and analytics</p>
+                        </div>
+                    </div>
+
+                    {/* Stats Overview */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
+                        {[
+                            { label: 'Total Users', value: stats.totalUsers, icon: Users, color: 'text-[#a22929]', bg: 'bg-red-50' },
+                            { label: 'Total Admins', value: stats.totalAdmins, icon: Shield, color: 'text-gray-600', bg: 'bg-gray-100' },
+                            { label: 'Active Now', value: stats.activeUsers, icon: Activity, color: 'text-green-600', bg: 'bg-green-50' },
+                            { label: 'Posts', value: stats.totalPosts, icon: FileText, color: 'text-[#a22929]', bg: 'bg-red-50' },
+                            { label: 'Stories', value: stats.totalStories, icon: Image, color: 'text-[#a22929]', bg: 'bg-red-50' },
+                            { label: 'Chats', value: stats.totalChats, icon: MessageSquare, color: 'text-[#a22929]', bg: 'bg-red-50' },
+                        ].map((stat, i) => (
+                            <div key={i} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 transition-all hover:shadow-md hover:border-red-100">
+                                <div className={`${stat.bg} ${stat.color} w-12 h-12 rounded-xl flex items-center justify-center mb-4`}>
+                                    <stat.icon className="w-6 h-6" />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-900">{stat.value}</h3>
+                                <p className="text-gray-500 font-medium text-xs uppercase tracking-wide">{stat.label}</p>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Alerts Section (Real-time) */}
+                    <div className="bg-red-50 border border-red-100 rounded-2xl p-6 mb-8">
+                        <div className="flex items-center gap-3 mb-4">
+                            <Shield className="w-6 h-6 text-[#a22929]" />
+                            <h3 className="text-lg font-bold text-[#a22929]">Recent Security Alerts</h3>
+                        </div>
+                        <div className="space-y-3">
+                            {alerts.length === 0 ? (
+                                <div className="bg-white p-3 rounded-lg border border-red-100 flex items-center justify-between">
+                                    <span className="text-sm text-gray-600">No active alerts. System is monitoring content...</span>
+                                </div>
+                            ) : (
+                                alerts.map(alert => (
+                                    <div key={alert.id} className="bg-white p-4 rounded-lg border border-red-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="bg-red-100 text-[#a22929] text-xs font-bold px-2 py-1 rounded-full uppercase">{alert.type}</span>
+                                                <span className="text-xs text-gray-400">{alert.timestamp ? new Date(alert.timestamp.seconds * 1000).toLocaleString() : 'Just now'}</span>
+                                            </div>
+                                            <p className="font-semibold text-gray-900 mt-1">"{alert.content}"</p>
+                                            <p className="text-sm text-gray-500">User: {alert.userEmail}</p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <Button size="sm" variant="outline" className="text-gray-600 hover:text-[#a22929]" onClick={() => router.push(`/users/${alert.userId}`)}>View User</Button>
+                                            <Button size="sm" className="bg-[#a22929] hover:bg-[#8f2424]">Resolve</Button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* Recent Users Table */}
+                        <div className="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+                            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                                <h2 className="text-xl font-bold text-gray-900">Recent Users</h2>
+                                <Button variant="ghost" size="sm" className="text-[#a22929] font-semibold hover:bg-red-50" onClick={fetchUsers}>Refresh</Button>
+                            </div>
+                            <div className="overflow-x-auto flex-1">
+                                <table className="w-full text-left">
+                                    <thead className="bg-gray-50/50">
+                                        <tr>
+                                            <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">User</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Joined</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">UID</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {users.map((u) => (
+                                            <tr key={u.uid} className="hover:bg-gray-50/50 transition-colors group">
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-full bg-gray-100 overflow-hidden">
+                                                            {u.photoURL ? <img src={u.photoURL} alt="" className="w-full h-full object-cover" /> : null}
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-bold text-gray-900">{u.displayName || 'Anonymous'}</p>
+                                                            <p className="text-xs text-gray-400">{u.email}</p>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    {isOnline(u.lastSeen) ? (
+                                                        <span className="flex items-center gap-1.5 text-xs font-bold text-green-600 bg-green-50 px-2.5 py-1 rounded-full w-fit">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> Active
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-xs font-bold text-gray-400 bg-gray-50 px-2.5 py-1 rounded-full w-fit">Offline</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4 text-sm text-gray-500 font-medium">
+                                                    {u.createdAt?.seconds ? new Date(u.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}
+                                                </td>
+                                                <td className="px-6 py-4 text-xs text-mono text-gray-400">
+                                                    {u.uid}
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-[#a22929] hover:bg-red-50"
+                                                        onClick={() => router.push(`/users/${u.uid}`)}
+                                                    >
+                                                        Manage
+                                                    </Button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </SuperAdminRoute >
+    )
+}
